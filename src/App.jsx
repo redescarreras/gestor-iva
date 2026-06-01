@@ -24,7 +24,6 @@ import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'fi
 
 // --- CONFIGURACIÓN Y ESTADO INICIAL ---
 // ⚠️ CLAVE CODIFICADA (Base64) PARA ENGAÑAR A GITHUB Y AL EMPAQUETADOR VITE
-// atob() descifra la clave en tiempo real al abrir la app, así los robots de seguridad no pueden leerla en el código.
 const encodedKey = "QVEuQWI4Uk42S3dsTTJIMVhENGFKOFlHUHY2MzJQRUo3OGgzMXQxMEdQLXhaNVNmdklzUEE=";
 const apiKey = atob(encodedKey);
 
@@ -41,7 +40,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Datos de ejemplo iniciales (puedes borrarlos en Firebase si quieres empezar de cero)
+// Datos de ejemplo iniciales
 const initialInvoices = [
   { id: '1', type: 'income', emitter: 'Cliente A', date: '2023-10-15', subtotal: 1000, ivaDetails: [{ rate: 21, base: 1000, amount: 210 }], totalIva: 210, total: 1210 },
   { id: '2', type: 'expense', emitter: 'Proveedor Internet', date: '2023-10-20', subtotal: 200, ivaDetails: [{ rate: 21, base: 200, amount: 42 }], totalIva: 42, total: 242 },
@@ -49,13 +48,27 @@ const initialInvoices = [
 
 export default function App() {
   const [invoices, setInvoices] = useState([]);
-  const [currentView, setCurrentView] = useState('dashboard'); // dashboard, upload-expense, upload-income, reports
+  const [currentView, setCurrentView] = useState('dashboard');
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // Función para alternar pantalla completa
+  // --- ELIMINAR LÍMITES POR DEFECTO DE VITE ---
+  useEffect(() => {
+    // Forzamos al body y al contenedor raíz a ocupar el 100% sin márgenes blancos
+    document.body.style.margin = '0';
+    document.body.style.padding = '0';
+    const rootNode = document.getElementById('root');
+    if (rootNode) {
+      rootNode.style.maxWidth = '100%';
+      rootNode.style.margin = '0';
+      rootNode.style.padding = '0';
+      rootNode.style.textAlign = 'left';
+    }
+  }, []);
+
+  // Función para alternar pantalla completa del navegador
   const toggleFullScreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(err => console.log(err));
@@ -86,7 +99,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Sincronización con Firestore (Base de datos en la nube)
+  // 2. Sincronización con Firestore
   useEffect(() => {
     if (!user) return;
     setIsSyncing(true);
@@ -104,7 +117,6 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Función para añadir una factura confirmada a Firebase
   const addInvoice = async (invoice) => {
     if (!user) return;
     try {
@@ -140,7 +152,7 @@ export default function App() {
   return (
     <div className="flex h-screen w-full bg-gray-50 text-gray-800 font-sans overflow-hidden">
       {/* Sidebar Navigation */}
-      <aside className="w-64 bg-black text-white flex flex-col shadow-xl z-20">
+      <aside className="w-64 bg-black text-white flex flex-col shadow-xl z-20 flex-shrink-0">
         <div className="p-6 flex flex-col items-center border-b border-gray-800">
           {/* Logo Fallback Text/Image */}
           <div className="bg-white p-2 rounded-lg mb-3">
@@ -191,7 +203,8 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto relative w-full">
-        <div className="p-8 max-w-7xl mx-auto">
+        {/* Aquí cambiamos max-w-7xl mx-auto por w-full para que ocupe todo el ancho */}
+        <div className="p-8 w-full">
           {currentView === 'dashboard' && <DashboardView invoices={invoices} />}
           {currentView === 'upload-expense' && <UploadView type="expense" onSave={addInvoice} />}
           {currentView === 'upload-income' && <UploadView type="income" onSave={addInvoice} />}
@@ -218,7 +231,6 @@ function NavItem({ icon, label, isActive, onClick }) {
 
 // --- VISTA DASHBOARD ---
 function DashboardView({ invoices }) {
-  // Cálculos globales rápidos
   const totalIncomeIVA = invoices.filter(i => i.type === 'income').reduce((acc, curr) => acc + curr.totalIva, 0);
   const totalExpenseIVA = invoices.filter(i => i.type === 'expense').reduce((acc, curr) => acc + curr.totalIva, 0);
   const result = totalIncomeIVA - totalExpenseIVA;
@@ -316,7 +328,6 @@ function UploadView({ type, onSave }) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
   
-  // Datos extraidos que el usuario puede editar antes de guardar
   const [extractedData, setExtractedData] = useState(null);
 
   const handleFileChange = (e) => {
@@ -334,19 +345,16 @@ function UploadView({ type, onSave }) {
     setError('');
 
     try {
-      // 1. Convertir archivo a base64
       const reader = new FileReader();
       reader.readAsDataURL(file);
       reader.onload = async () => {
         const base64Data = reader.result.split(',')[1];
         const mimeType = file.type;
 
-        // Validamos tipos de archivo
         if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf') {
            throw new Error("Formato no soportado. Por favor sube una imagen o PDF.");
         }
 
-        // 2. Llamada a Gemini con reintentos
         let resultData = null;
         let attempts = 0;
         const maxAttempts = 3;
@@ -401,15 +409,14 @@ function UploadView({ type, onSave }) {
             if (!rawText) throw new Error("Respuesta vacía de la IA");
 
             resultData = JSON.parse(rawText);
-            break; // Éxito, salir del bucle
+            break; 
           } catch (err) {
             attempts++;
             if (attempts >= maxAttempts) throw err;
-            await new Promise(r => setTimeout(r, 2000 * attempts)); // Backoff
+            await new Promise(r => setTimeout(r, 2000 * attempts)); 
           }
         }
 
-        // Si la IA falla pero tenemos un fallback manual, lo mostramos
         if (!resultData) throw new Error("No se pudo parsear el documento");
 
         setExtractedData(resultData);
@@ -423,7 +430,6 @@ function UploadView({ type, onSave }) {
     } catch (err) {
         console.error("Error AI Extraction:", err);
         setError("Error extrayendo datos con IA. Por favor, introduce los datos manualmente o intenta con otra imagen más clara.");
-        // Activar formulario manual
         setExtractedData({
           emitter: "", date: new Date().toISOString().split('T')[0], subtotal: 0, ivaDetails: [{ rate: 21, base: 0, amount: 0 }], totalIva: 0, total: 0
         });
@@ -435,7 +441,6 @@ function UploadView({ type, onSave }) {
     e.preventDefault();
     if (!extractedData) return;
     
-    // Validación extra antes de guardar
     const finalData = {
       ...extractedData,
       type: type,
@@ -450,12 +455,10 @@ function UploadView({ type, onSave }) {
     const newDetails = [...extractedData.ivaDetails];
     newDetails[index][field] = Number(value);
     
-    // Auto-calcular cuota si cambia base o tasa
     if (field === 'base' || field === 'rate') {
        newDetails[index].amount = (newDetails[index].base * (newDetails[index].rate / 100));
     }
 
-    // Auto-calcular subtotal total
     const newSubtotal = newDetails.reduce((acc, curr) => acc + curr.base, 0);
     const newTotalIva = newDetails.reduce((acc, curr) => acc + curr.amount, 0);
     
@@ -541,7 +544,6 @@ function UploadView({ type, onSave }) {
         </div>
       )}
 
-      {/* Formulario de Revisión (Aparece tras extraer datos o si hay error) */}
       {extractedData && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="bg-orange-50 p-4 border-b border-orange-100 flex items-center space-x-2">
@@ -663,14 +665,13 @@ function UploadView({ type, onSave }) {
 
 // --- VISTA DE REPORTES Y CÁLCULOS ---
 function ReportsView({ invoices, onDelete }) {
-  const [filterPeriod, setFilterPeriod] = useState('all'); // all, q1, q2, q3, q4, y2023, etc.
+  const [filterPeriod, setFilterPeriod] = useState('all'); 
   
-  // Lógica de filtrado
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
       if (filterPeriod === 'all') return true;
       const date = new Date(inv.date);
-      const month = date.getMonth(); // 0-11
+      const month = date.getMonth(); 
       const year = date.getFullYear();
       
       if (filterPeriod === 'q1') return month >= 0 && month <= 2;
@@ -683,7 +684,6 @@ function ReportsView({ invoices, onDelete }) {
     });
   }, [invoices, filterPeriod]);
 
-  // Cálculos del reporte
   const stats = useMemo(() => {
     const income = filteredInvoices.filter(i => i.type === 'income');
     const expense = filteredInvoices.filter(i => i.type === 'expense');
@@ -701,7 +701,6 @@ function ReportsView({ invoices, onDelete }) {
     };
   }, [filteredInvoices]);
 
-  // FUNCIÓN PARA EXPORTAR A PDF
   const handleExportPDF = () => {
     if (!window.jspdf || !window.jspdf.jsPDF) {
       alert("El generador de PDF aún se está cargando. Por favor, espera un par de segundos e inténtalo de nuevo.");
@@ -711,7 +710,6 @@ function ReportsView({ invoices, onDelete }) {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
 
-    // Título y Periodo
     let periodText = filterPeriod === 'all' ? 'Todo el histórico' : filterPeriod.toUpperCase();
     doc.setFontSize(18);
     doc.text(`Reporte de IVA - REDES CARRERAS S.L.`, 14, 20);
@@ -720,7 +718,6 @@ function ReportsView({ invoices, onDelete }) {
     doc.text(`Periodo seleccionado: ${periodText}`, 14, 28);
     doc.text(`Fecha de emisión: ${new Date().toLocaleDateString()}`, 14, 34);
 
-    // Preparar datos para la tabla
     const tableData = filteredInvoices.sort((a,b) => new Date(b.date) - new Date(a.date)).map(inv => [
       inv.date,
       inv.emitter,
@@ -730,17 +727,15 @@ function ReportsView({ invoices, onDelete }) {
       `€ ${inv.total.toFixed(2)}`
     ]);
 
-    // Generar Tabla
     doc.autoTable({
       startY: 42,
       head: [['Fecha', 'Concepto', 'Tipo', 'Base Imp.', 'Total IVA', 'Total']],
       body: tableData,
       theme: 'grid',
-      headStyles: { fillColor: [234, 88, 12] }, // Naranja corporativo
+      headStyles: { fillColor: [234, 88, 12] }, 
       styles: { fontSize: 9 }
     });
 
-    // Resumen de Liquidación al final de la tabla
     const finalY = doc.lastAutoTable.finalY || 42;
     doc.setFontSize(14);
     doc.setTextColor(0);
@@ -753,13 +748,12 @@ function ReportsView({ invoices, onDelete }) {
     
     doc.setFontSize(12);
     const isPagar = stats.liquidacion >= 0;
-    doc.setTextColor(isPagar ? 220 : 22, isPagar ? 38 : 163, isPagar ? 38 : 74); // Rojo si a pagar, Verde si a devolver
+    doc.setTextColor(isPagar ? 220 : 22, isPagar ? 38 : 163, isPagar ? 38 : 74); 
     doc.setFont(undefined, 'bold');
     
     const resultadoTexto = isPagar ? 'A PAGAR A HACIENDA' : 'A DEVOLVER / COMPENSAR';
     doc.text(`RESULTADO FINAL: € ${Math.abs(stats.liquidacion).toFixed(2)} (${resultadoTexto})`, 14, finalY + 45);
 
-    // Guardar el archivo
     doc.save(`Reporte_IVA_RedesCarreras_${periodText}.pdf`);
   };
 
