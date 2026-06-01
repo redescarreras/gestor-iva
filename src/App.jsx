@@ -19,18 +19,24 @@ import {
   Minimize
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
 // --- CONFIGURACIÓN Y ESTADO INICIAL ---
-const apiKey = ""; // El entorno inyectará la clave aquí
+const apiKey = "AQ.Ab8RN6LJfWtXae8xFQg2jNq9VqAbUYbdDE9d74Az2EEB0IRA3A"; 
 
-// --- CONFIGURACIÓN FIREBASE ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+// --- CONFIGURACIÓN FIREBASE REAL ---
+const firebaseConfig = {
+  apiKey: "AIzaSyD71ejCZx6kNVMugTQvYHnhrn_44osg4ZA",
+  authDomain: "iva-app-7b81e.firebaseapp.com",
+  projectId: "iva-app-7b81e",
+  storageBucket: "iva-app-7b81e.firebasestorage.app",
+  messagingSenderId: "314274336517",
+  appId: "1:314274336517:web:b787d9f772b94b0c28716c"
+};
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'gestor-iva-redes';
 
 // Datos de ejemplo para que el dashboard no esté vacío al inicio
 const initialInvoices = [
@@ -63,11 +69,7 @@ export default function App() {
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (error) {
         console.error("Error al autenticar:", error);
       }
@@ -86,7 +88,7 @@ export default function App() {
     if (!user) return;
     setIsSyncing(true);
     
-    const invoicesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'invoices');
+    const invoicesRef = collection(db, 'users', user.uid, 'invoices');
     const unsubscribe = onSnapshot(invoicesRef, (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data());
       setInvoices(data);
@@ -105,7 +107,7 @@ export default function App() {
     try {
       const newId = Date.now().toString();
       const invoiceData = { ...invoice, id: newId };
-      const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'invoices', newId);
+      const docRef = doc(db, 'users', user.uid, 'invoices', newId);
       await setDoc(docRef, invoiceData);
       setCurrentView('reports');
     } catch (error) {
@@ -116,7 +118,7 @@ export default function App() {
   const deleteInvoice = async (id) => {
     if (!user) return;
     try {
-      const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'invoices', id);
+      const docRef = doc(db, 'users', user.uid, 'invoices', id);
       await deleteDoc(docRef);
     } catch (error) {
       console.error("Error eliminando la factura:", error);
@@ -383,7 +385,7 @@ function UploadView({ type, onSave }) {
               }
             };
 
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
