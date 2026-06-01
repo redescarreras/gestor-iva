@@ -698,6 +698,68 @@ function ReportsView({ invoices, onDelete }) {
     };
   }, [filteredInvoices]);
 
+  // FUNCIÓN PARA EXPORTAR A PDF
+  const handleExportPDF = () => {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      alert("El generador de PDF aún se está cargando. Por favor, espera un par de segundos e inténtalo de nuevo.");
+      return;
+    }
+    
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+
+    // Título y Periodo
+    let periodText = filterPeriod === 'all' ? 'Todo el histórico' : filterPeriod.toUpperCase();
+    doc.setFontSize(18);
+    doc.text(`Reporte de IVA - REDES CARRERAS S.L.`, 14, 20);
+    doc.setFontSize(11);
+    doc.setTextColor(100);
+    doc.text(`Periodo seleccionado: ${periodText}`, 14, 28);
+    doc.text(`Fecha de emisión: ${new Date().toLocaleDateString()}`, 14, 34);
+
+    // Preparar datos para la tabla
+    const tableData = filteredInvoices.sort((a,b) => new Date(b.date) - new Date(a.date)).map(inv => [
+      inv.date,
+      inv.emitter,
+      inv.type === 'income' ? 'VENTA' : 'COMPRA',
+      `€ ${inv.subtotal.toFixed(2)}`,
+      `€ ${inv.totalIva.toFixed(2)}`,
+      `€ ${inv.total.toFixed(2)}`
+    ]);
+
+    // Generar Tabla
+    doc.autoTable({
+      startY: 42,
+      head: [['Fecha', 'Concepto', 'Tipo', 'Base Imp.', 'Total IVA', 'Total']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: [234, 88, 12] }, // Naranja corporativo
+      styles: { fontSize: 9 }
+    });
+
+    // Resumen de Liquidación al final de la tabla
+    const finalY = doc.lastAutoTable.finalY || 42;
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text("Resumen de Liquidación", 14, finalY + 15);
+    
+    doc.setFontSize(11);
+    doc.setTextColor(80);
+    doc.text(`Total IVA Repercutido (Ventas): € ${stats.totalIncomeIva.toFixed(2)}`, 14, finalY + 25);
+    doc.text(`Total IVA Soportado (Compras): € ${stats.totalExpenseIva.toFixed(2)}`, 14, finalY + 32);
+    
+    doc.setFontSize(12);
+    const isPagar = stats.liquidacion >= 0;
+    doc.setTextColor(isPagar ? 220 : 22, isPagar ? 38 : 163, isPagar ? 38 : 74); // Rojo si a pagar, Verde si a devolver
+    doc.setFont(undefined, 'bold');
+    
+    const resultadoTexto = isPagar ? 'A PAGAR A HACIENDA' : 'A DEVOLVER / COMPENSAR';
+    doc.text(`RESULTADO FINAL: € ${Math.abs(stats.liquidacion).toFixed(2)} (${resultadoTexto})`, 14, finalY + 45);
+
+    // Guardar el archivo
+    doc.save(`Reporte_IVA_RedesCarreras_${periodText}.pdf`);
+  };
+
   return (
     <div className="w-full space-y-6">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
@@ -751,8 +813,8 @@ function ReportsView({ invoices, onDelete }) {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
           <h3 className="font-semibold text-gray-800">Detalle de Facturas</h3>
-          <button className="text-sm text-orange-600 font-medium flex items-center hover:text-orange-800">
-            <Download size={16} className="mr-1" /> Exportar a CSV
+          <button onClick={handleExportPDF} className="text-sm bg-orange-100 text-orange-700 px-3 py-1.5 rounded font-medium flex items-center hover:bg-orange-200 transition-colors">
+            <Download size={16} className="mr-2" /> Extraer a PDF
           </button>
         </div>
         <div className="overflow-x-auto">
