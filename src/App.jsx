@@ -1,68 +1,73 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  UploadCloud, FileText, PieChart, TrendingUp, TrendingDown, Calendar,
-  CheckCircle, AlertCircle, Loader2, Filter, Download, Trash2, Plus, Cloud, CloudOff
+  UploadCloud, 
+  FileText, 
+  PieChart, 
+  TrendingUp, 
+  TrendingDown, 
+  Calendar,
+  CheckCircle,
+  AlertCircle,
+  Loader2,
+  Filter,
+  Download,
+  Trash2,
+  Plus,
+  Cloud,
+  CloudOff,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
 
-// --- TUS CREDENCIALES ---
-const apiKey = "AQ.Ab8RN6LJfWtXae8xFQg2jNq9VqAbUYbdDE9d74Az2EEB0IRA3A"; 
+// --- CONFIGURACIÓN Y ESTADO INICIAL ---
+const apiKey = ""; // El entorno inyectará la clave aquí
 
-const firebaseConfig = {
-  apiKey: "AIzaSyD71ejCZx6kNVMugTQvYHnhrn_44osg4ZA",
-  authDomain: "iva-app-7b81e.firebaseapp.com",
-  projectId: "iva-app-7b81e",
-  storageBucket: "iva-app-7b81e.firebasestorage.app",
-  messagingSenderId: "314274336517",
-  appId: "1:314274336517:web:b787d9f772b94b0c28716c"
-};
-
-// --- INICIALIZACIÓN DE FIREBASE ---
+// --- CONFIGURACIÓN FIREBASE ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'gestor-iva-redes';
+
+// Datos de ejemplo para que el dashboard no esté vacío al inicio
+const initialInvoices = [
+  { id: '1', type: 'income', emitter: 'Cliente A', date: '2023-10-15', subtotal: 1000, ivaDetails: [{ rate: 21, base: 1000, amount: 210 }], totalIva: 210, total: 1210 },
+  { id: '2', type: 'expense', emitter: 'Proveedor Internet', date: '2023-10-20', subtotal: 200, ivaDetails: [{ rate: 21, base: 200, amount: 42 }], totalIva: 42, total: 242 },
+  { id: '3', type: 'expense', emitter: 'Restaurante Comida Trabajo', date: '2023-11-05', subtotal: 50, ivaDetails: [{ rate: 10, base: 50, amount: 5 }], totalIva: 5, total: 55 },
+  { id: '4', type: 'income', emitter: 'Ayuntamiento (Proyecto Redes)', date: '2023-11-10', subtotal: 5000, ivaDetails: [{ rate: 21, base: 5000, amount: 1050 }], totalIva: 1050, total: 6050 },
+];
 
 export default function App() {
   const [invoices, setInvoices] = useState([]);
-  const [currentView, setCurrentView] = useState('dashboard');
+  const [currentView, setCurrentView] = useState('dashboard'); // dashboard, upload-expense, upload-income, reports
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // --- TRUCO PARA CARGAR LOS ESTILOS Y LIBRERÍAS DE PDF EN LOCAL ---
-  useEffect(() => {
-    // Cargar Tailwind
-    if (!document.getElementById('tailwind-cdn')) {
-      const script = document.createElement('script');
-      script.id = 'tailwind-cdn';
-      script.src = 'https://cdn.tailwindcss.com';
-      document.head.appendChild(script);
+  // Función para alternar pantalla completa
+  const toggleFullScreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(err => console.log(err));
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen();
+      setIsFullscreen(false);
     }
-    
-    // Cargar generador de PDF ordenadamente
-    const loadPDFScripts = async () => {
-      const loadScript = (src, id) => new Promise((resolve) => {
-        if (document.getElementById(id)) { resolve(); return; }
-        const script = document.createElement('script');
-        script.id = id;
-        script.src = src;
-        script.onload = resolve;
-        document.head.appendChild(script);
-      });
+  };
 
-      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js', 'jspdf-cdn');
-      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js', 'jspdf-autotable-cdn');
-    };
-    loadPDFScripts();
-  }, []);
-
-  // 1. Autenticación Anónima
+  // 1. Inicialización de Autenticación
   useEffect(() => {
     const initAuth = async () => {
       try {
-        await signInAnonymously(auth);
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
       } catch (error) {
         console.error("Error al autenticar:", error);
       }
@@ -76,31 +81,31 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Sincronización con TU Firestore
+  // 2. Sincronización con Firestore (Base de datos en la nube)
   useEffect(() => {
     if (!user) return;
     setIsSyncing(true);
     
-    const invoicesRef = collection(db, 'users', user.uid, 'invoices');
+    const invoicesRef = collection(db, 'artifacts', appId, 'users', user.uid, 'invoices');
     const unsubscribe = onSnapshot(invoicesRef, (snapshot) => {
       const data = snapshot.docs.map(doc => doc.data());
       setInvoices(data);
       setIsSyncing(false);
     }, (error) => {
-      console.error("Error cargando facturas:", error);
+      console.error("Error cargando facturas de la nube:", error);
       setIsSyncing(false);
     });
 
     return () => unsubscribe();
   }, [user]);
 
-  // Guardar en la nube
+  // Función para añadir una factura confirmada a Firebase
   const addInvoice = async (invoice) => {
     if (!user) return;
     try {
       const newId = Date.now().toString();
       const invoiceData = { ...invoice, id: newId };
-      const docRef = doc(db, 'users', user.uid, 'invoices', newId);
+      const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'invoices', newId);
       await setDoc(docRef, invoiceData);
       setCurrentView('reports');
     } catch (error) {
@@ -108,11 +113,10 @@ export default function App() {
     }
   };
 
-  // Eliminar de la nube
   const deleteInvoice = async (id) => {
     if (!user) return;
     try {
-      const docRef = doc(db, 'users', user.uid, 'invoices', id);
+      const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'invoices', id);
       await deleteDoc(docRef);
     } catch (error) {
       console.error("Error eliminando la factura:", error);
@@ -123,19 +127,21 @@ export default function App() {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 flex-col space-y-4">
         <Loader2 className="animate-spin text-orange-600" size={48} />
-        <p className="text-gray-600 font-medium">Conectando con la base de datos...</p>
+        <p className="text-gray-600 font-medium">Conectando con la nube de Redes Carreras...</p>
       </div>
     );
   }
 
   return (
     <div className="flex h-screen bg-gray-50 text-gray-800 font-sans">
+      {/* Sidebar Navigation */}
       <aside className="w-64 bg-black text-white flex flex-col shadow-xl z-10">
         <div className="p-6 flex flex-col items-center border-b border-gray-800">
+          {/* Logo Fallback Text/Image */}
           <div className="bg-white p-2 rounded-lg mb-3">
             <img 
-              src="/logo-redes_Transparente-216x216.png" 
-              alt="Logo" 
+              src="./logo-redes_Transparente-216x216.png" 
+              alt="Redes Carreras S.L. Logo" 
               className="w-24 h-24 object-contain"
               onError={(e) => {
                 e.target.onerror = null; 
@@ -149,27 +155,36 @@ export default function App() {
 
         <nav className="flex-1 px-4 py-6 space-y-2">
           <NavItem icon={<PieChart />} label="Dashboard" isActive={currentView === 'dashboard'} onClick={() => setCurrentView('dashboard')} />
-          <NavItem icon={<TrendingDown className="text-red-400" />} label="Subir Compras" isActive={currentView === 'upload-expense'} onClick={() => setCurrentView('upload-expense')} />
-          <NavItem icon={<TrendingUp className="text-green-400" />} label="Subir Ventas" isActive={currentView === 'upload-income'} onClick={() => setCurrentView('upload-income')} />
-          <NavItem icon={<FileText />} label="Reportes" isActive={currentView === 'reports'} onClick={() => setCurrentView('reports')} />
+          <NavItem icon={<TrendingDown className="text-red-400" />} label="Subir Compras (Gastos)" isActive={currentView === 'upload-expense'} onClick={() => setCurrentView('upload-expense')} />
+          <NavItem icon={<TrendingUp className="text-green-400" />} label="Subir Ventas (Emitidas)" isActive={currentView === 'upload-income'} onClick={() => setCurrentView('upload-income')} />
+          <NavItem icon={<FileText />} label="Reportes y Liquidación" isActive={currentView === 'reports'} onClick={() => setCurrentView('reports')} />
         </nav>
         
         <div className="p-4 text-xs text-gray-500 border-t border-gray-800 text-center flex flex-col items-center">
           <p className="mb-2">Gestión de IVA v1.0</p>
           {user ? (
-            <div className="flex items-center space-x-1 text-green-400 bg-green-400/10 px-3 py-1.5 rounded-full">
+            <div className="flex items-center space-x-1 text-green-400 bg-green-400/10 px-3 py-1.5 rounded-full mb-3">
               <Cloud size={14} />
-              <span className="font-medium">{isSyncing ? 'Sincronizando...' : 'Conectado a Firebase'}</span>
+              <span className="font-medium">{isSyncing ? 'Sincronizando...' : 'Conectado a la Nube'}</span>
             </div>
           ) : (
-             <div className="flex items-center space-x-1 text-red-400 bg-red-400/10 px-3 py-1.5 rounded-full">
+             <div className="flex items-center space-x-1 text-red-400 bg-red-400/10 px-3 py-1.5 rounded-full mb-3">
               <CloudOff size={14} />
-              <span className="font-medium">Sin Conexión</span>
+              <span className="font-medium">Modo Local</span>
             </div>
           )}
+
+          <button 
+            onClick={toggleFullScreen} 
+            className="flex items-center justify-center space-x-2 w-full py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg transition-colors"
+          >
+            {isFullscreen ? <Minimize size={16} /> : <Maximize size={16} />}
+            <span>{isFullscreen ? 'Salir' : 'Pantalla Completa'}</span>
+          </button>
         </div>
       </aside>
 
+      {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto">
         <div className="p-8">
           {currentView === 'dashboard' && <DashboardView invoices={invoices} />}
@@ -196,7 +211,9 @@ function NavItem({ icon, label, isActive, onClick }) {
   );
 }
 
+// --- VISTA DASHBOARD ---
 function DashboardView({ invoices }) {
+  // Cálculos globales rápidos
   const totalIncomeIVA = invoices.filter(i => i.type === 'income').reduce((acc, curr) => acc + curr.totalIva, 0);
   const totalExpenseIVA = invoices.filter(i => i.type === 'expense').reduce((acc, curr) => acc + curr.totalIva, 0);
   const result = totalIncomeIVA - totalExpenseIVA;
@@ -209,13 +226,29 @@ function DashboardView({ invoices }) {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <StatCard title="IVA Repercutido (Ventas)" amount={totalIncomeIVA} icon={<TrendingUp size={24} className="text-green-600" />} bgColor="bg-green-100" />
-        <StatCard title="IVA Soportado (Compras)" amount={totalExpenseIVA} icon={<TrendingDown size={24} className="text-red-600" />} bgColor="bg-red-100" />
-        <StatCard title="A Pagar a Hacienda" amount={result} icon={<PieChart size={24} className="text-orange-600" />} bgColor="bg-orange-100" isResult={true} />
+        <StatCard 
+          title="IVA Repercutido (Ventas)" 
+          amount={totalIncomeIVA} 
+          icon={<TrendingUp size={24} className="text-green-600" />}
+          bgColor="bg-green-100"
+        />
+        <StatCard 
+          title="IVA Soportado (Compras)" 
+          amount={totalExpenseIVA} 
+          icon={<TrendingDown size={24} className="text-red-600" />}
+          bgColor="bg-red-100"
+        />
+        <StatCard 
+          title="A Pagar a Hacienda" 
+          amount={result} 
+          icon={<PieChart size={24} className="text-orange-600" />}
+          bgColor="bg-orange-100"
+          isResult={true}
+        />
       </div>
 
       <div className="mt-12 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h3 className="text-xl font-semibold mb-4">Últimos Movimientos</h3>
+        <h3 className="text-xl font-semibold mb-4">Últimos Movimientos Registrados</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left text-gray-500">
             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
@@ -258,21 +291,27 @@ function StatCard({ title, amount, icon, bgColor, isResult }) {
   const isNegative = amount < 0;
   return (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
-      <div className={`p-4 rounded-full ${bgColor}`}>{icon}</div>
+      <div className={`p-4 rounded-full ${bgColor}`}>
+        {icon}
+      </div>
       <div>
         <p className="text-sm font-medium text-gray-500">{title}</p>
         <h4 className={`text-2xl font-bold ${isResult ? (isNegative ? 'text-green-600' : 'text-red-600') : 'text-gray-900'}`}>
-          {isResult && isNegative ? 'A Devolver: ' : ''}€{Math.abs(amount).toFixed(2)}
+          {isResult && isNegative ? 'A Devolver: ' : ''}
+          €{Math.abs(amount).toFixed(2)}
         </h4>
       </div>
     </div>
   );
 }
 
+// --- VISTA DE CARGA Y EXTRACCIÓN (IA) ---
 function UploadView({ type, onSave }) {
   const [file, setFile] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState('');
+  
+  // Datos extraidos que el usuario puede editar antes de guardar
   const [extractedData, setExtractedData] = useState(null);
 
   const handleFileChange = (e) => {
@@ -290,84 +329,99 @@ function UploadView({ type, onSave }) {
     setError('');
 
     try {
-      const getBase64 = (file) => new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = error => reject(error);
-      });
+      // 1. Convertir archivo a base64
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = async () => {
+        const base64Data = reader.result.split(',')[1];
+        const mimeType = file.type;
 
-      const base64Data = await getBase64(file);
-      const mimeType = file.type;
-
-      if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf') {
-         throw new Error("Formato no soportado. Por favor sube una imagen o PDF.");
-      }
-
-      let resultData = null;
-      let attempts = 0;
-      
-      while (attempts < 3) {
-        try {
-          const prompt = `Eres un contable experto en España. Extrae los datos de esta factura.
-          REGLAS IMPORTANTES:
-          - Devuelve ÚNICAMENTE un objeto JSON válido.
-          - Extrae el nombre del emisor.
-          - Extrae la fecha en formato YYYY-MM-DD.
-          - Extrae el subtotal (base imponible).
-          - Identifica TODOS los tipos de IVA presentes. Para cada uno crea un objeto con "rate" (porcentaje), "base" y "amount" (cuota de IVA).
-          - Calcula el "totalIva" sumando todas las cuotas.
-          - Extrae el "total" de la factura.
-          
-          Estructura JSON requerida:
-          {
-            "emitter": "Nombre de Empresa",
-            "date": "2023-12-31",
-            "subtotal": 100.00,
-            "ivaDetails": [{ "rate": 21, "base": 100.00, "amount": 21.00 }],
-            "totalIva": 21.00,
-            "total": 121.00
-          }`;
-
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType, data: base64Data } }] }],
-              generationConfig: { responseMimeType: "application/json" }
-            })
-          });
-
-          if (!response.ok) {
-            const errDetails = await response.json();
-            console.error("Detalles del error de Google API:", errDetails);
-            const errorMessage = errDetails.error?.message || "Error desconocido en la API de Google.";
-            throw new Error(`Error de IA: ${errorMessage}`);
-          }
-
-          const data = await response.json();
-          const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          
-          if (!rawText) throw new Error("La IA devolvió una respuesta vacía.");
-
-          const cleanedText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-          resultData = JSON.parse(cleanedText);
-          break; 
-          
-        } catch (err) {
-          console.warn(`Intento ${attempts + 1} fallido:`, err);
-          attempts++;
-          if (attempts >= 3) throw err; 
-          await new Promise(r => setTimeout(r, 2000 * attempts));
+        // Validamos tipos de archivo
+        if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf') {
+           throw new Error("Formato no soportado. Por favor sube una imagen o PDF.");
         }
-      }
 
-      setExtractedData(resultData);
-      setIsProcessing(false);
+        // 2. Llamada a Gemini con reintentos
+        let resultData = null;
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (attempts < maxAttempts) {
+          try {
+            const prompt = `Eres un contable experto en España. Extrae los datos de esta factura.
+            REGLAS IMPORTANTES:
+            - Devuelve ÚNICAMENTE un objeto JSON válido, sin formato markdown ni texto adicional.
+            - Extrae el nombre del emisor (proveedor o cliente).
+            - Extrae la fecha en formato YYYY-MM-DD.
+            - Extrae el subtotal (base imponible).
+            - Identifica TODOS los tipos de IVA presentes (ej. 21%, 10%, 4%). Para cada uno crea un objeto con "rate" (porcentaje), "base" y "amount" (cuota de IVA).
+            - Calcula el "total_iva" sumando todas las cuotas.
+            - Extrae el "total" de la factura.
+            
+            Estructura JSON requerida:
+            {
+              "emitter": "Nombre de Empresa",
+              "date": "2023-12-31",
+              "subtotal": 100.00,
+              "ivaDetails": [
+                { "rate": 21, "base": 100.00, "amount": 21.00 }
+              ],
+              "totalIva": 21.00,
+              "total": 121.00
+            }`;
+
+            const payload = {
+              contents: [{
+                role: "user",
+                parts: [
+                  { text: prompt },
+                  { inlineData: { mimeType: mimeType, data: base64Data } }
+                ]
+              }],
+              generationConfig: {
+                responseMimeType: "application/json"
+              }
+            };
+
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) throw new Error("Error en la API de Google");
+            const data = await response.json();
+            
+            const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (!rawText) throw new Error("Respuesta vacía de la IA");
+
+            resultData = JSON.parse(rawText);
+            break; // Éxito, salir del bucle
+          } catch (err) {
+            attempts++;
+            if (attempts >= maxAttempts) throw err;
+            await new Promise(r => setTimeout(r, 2000 * attempts)); // Backoff
+          }
+        }
+
+        // Si la IA falla pero tenemos un fallback manual, lo mostramos
+        if (!resultData) throw new Error("No se pudo parsear el documento");
+
+        setExtractedData(resultData);
+        setIsProcessing(false);
+      };
+      
+      reader.onerror = () => {
+        throw new Error("Error leyendo el archivo local");
+      }
 
     } catch (err) {
-        console.error("Fallo final extrayendo datos:", err);
-        setError(`Motivo del rechazo de Google: ${err.message}`);
+        console.error("Error AI Extraction:", err);
+        setError("Error extrayendo datos con IA. Por favor, introduce los datos manualmente o intenta con otra imagen más clara.");
+        // Activar formulario manual
+        setExtractedData({
+          emitter: "", date: new Date().toISOString().split('T')[0], subtotal: 0, ivaDetails: [{ rate: 21, base: 0, amount: 0 }], totalIva: 0, total: 0
+        });
         setIsProcessing(false);
     }
   };
@@ -375,12 +429,15 @@ function UploadView({ type, onSave }) {
   const handleManualSave = (e) => {
     e.preventDefault();
     if (!extractedData) return;
+    
+    // Validación extra antes de guardar
     const finalData = {
       ...extractedData,
       type: type,
       totalIva: extractedData.ivaDetails.reduce((acc, curr) => acc + Number(curr.amount), 0),
       total: Number(extractedData.subtotal) + extractedData.ivaDetails.reduce((acc, curr) => acc + Number(curr.amount), 0)
     };
+
     onSave(finalData);
   };
 
@@ -388,9 +445,12 @@ function UploadView({ type, onSave }) {
     const newDetails = [...extractedData.ivaDetails];
     newDetails[index][field] = Number(value);
     
+    // Auto-calcular cuota si cambia base o tasa
     if (field === 'base' || field === 'rate') {
        newDetails[index].amount = (newDetails[index].base * (newDetails[index].rate / 100));
     }
+
+    // Auto-calcular subtotal total
     const newSubtotal = newDetails.reduce((acc, curr) => acc + curr.base, 0);
     const newTotalIva = newDetails.reduce((acc, curr) => acc + curr.amount, 0);
     
@@ -403,19 +463,33 @@ function UploadView({ type, onSave }) {
     });
   };
 
-  const addIvaDetail = () => setExtractedData({ ...extractedData, ivaDetails: [...extractedData.ivaDetails, { rate: 10, base: 0, amount: 0 }] });
-  
+  const addIvaDetail = () => {
+    setExtractedData({
+      ...extractedData,
+      ivaDetails: [...extractedData.ivaDetails, { rate: 10, base: 0, amount: 0 }]
+    });
+  };
+
   const removeIvaDetail = (index) => {
     const newDetails = extractedData.ivaDetails.filter((_, i) => i !== index);
     const newSubtotal = newDetails.reduce((acc, curr) => acc + curr.base, 0);
     const newTotalIva = newDetails.reduce((acc, curr) => acc + curr.amount, 0);
-    setExtractedData({ ...extractedData, ivaDetails: newDetails, subtotal: newSubtotal, totalIva: newTotalIva, total: newSubtotal + newTotalIva });
+    setExtractedData({
+      ...extractedData,
+      ivaDetails: newDetails,
+      subtotal: newSubtotal,
+      totalIva: newTotalIva,
+      total: newSubtotal + newTotalIva
+    });
   }
 
+
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="w-full">
       <header className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900">{type === 'expense' ? 'Subir Factura de Compra/Gasto' : 'Subir Factura de Venta/Emitida'}</h2>
+        <h2 className="text-3xl font-bold text-gray-900">
+          {type === 'expense' ? 'Subir Factura de Compra/Gasto' : 'Subir Factura de Venta/Emitida'}
+        </h2>
         <p className="text-gray-500">Sube una imagen o PDF. Nuestra IA extraerá automáticamente el IVA.</p>
       </header>
 
@@ -424,83 +498,121 @@ function UploadView({ type, onSave }) {
           <UploadCloud size={48} className="mx-auto text-orange-500 mb-4" />
           <h3 className="text-lg font-semibold mb-2">Selecciona un documento</h3>
           <p className="text-sm text-gray-500 mb-6">Formatos soportados: JPG, PNG, PDF</p>
-          <input type="file" accept="image/*,application/pdf" className="hidden" id="file-upload" onChange={handleFileChange} />
-          <label htmlFor="file-upload" className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-lg font-medium cursor-pointer transition-colors">
+          
+          <input 
+            type="file" 
+            accept="image/*,application/pdf" 
+            className="hidden" 
+            id="file-upload"
+            onChange={handleFileChange}
+          />
+          <label 
+            htmlFor="file-upload" 
+            className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-3 rounded-lg font-medium cursor-pointer transition-colors"
+          >
             Examinar Archivos
           </label>
 
           {file && (
             <div className="mt-6 flex flex-col items-center">
               <p className="text-sm font-medium text-gray-800 mb-4">Archivo seleccionado: {file.name}</p>
-              <button onClick={processFileWithAI} disabled={isProcessing} className="bg-black text-white px-6 py-2 rounded-lg font-medium flex items-center space-x-2 disabled:opacity-50">
+              <button 
+                onClick={processFileWithAI}
+                disabled={isProcessing}
+                className="bg-black text-white px-6 py-2 rounded-lg font-medium flex items-center space-x-2 disabled:opacity-50"
+              >
                 {isProcessing ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
                 <span>{isProcessing ? 'Extrayendo Datos...' : 'Extraer Datos con IA'}</span>
               </button>
             </div>
           )}
+
           {error && (
-            <div className="mt-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg flex flex-col items-start text-left">
-              <div className="flex items-center space-x-2 mb-3">
-                <AlertCircle size={20} className="shrink-0" />
-                <p className="text-sm font-bold">Error de conexión con la IA de Google</p>
-              </div>
-              <p className="text-sm mb-4 font-mono bg-red-100 p-2 rounded w-full break-words">{error}</p>
-              <p className="text-sm mb-3 text-gray-800">
-                *Nota: Como generaste la clave en Google Cloud, es muy probable que necesites ir a la consola de Google Cloud, buscar <b>"Generative Language API"</b> y darle a "Habilitar".
-              </p>
-              <button 
-                onClick={() => setExtractedData({ emitter: "", date: new Date().toISOString().split('T')[0], subtotal: 0, ivaDetails: [{ rate: 21, base: 0, amount: 0 }], totalIva: 0, total: 0 })}
-                className="text-sm bg-red-600 text-white px-4 py-2 rounded shadow-sm hover:bg-red-700 transition-colors"
-              >
-                Ignorar error y rellenar factura a mano
-              </button>
+            <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-start space-x-2 text-left">
+              <AlertCircle size={20} className="shrink-0 mt-0.5" />
+              <p className="text-sm">{error}</p>
             </div>
           )}
         </div>
       )}
 
+      {/* Formulario de Revisión (Aparece tras extraer datos o si hay error) */}
       {extractedData && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mt-6">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
           <div className="bg-orange-50 p-4 border-b border-orange-100 flex items-center space-x-2">
             <CheckCircle className="text-orange-600" size={20} />
-            <span className="font-semibold text-orange-800">Revisión de Datos</span>
+            <span className="font-semibold text-orange-800">Revisión de Datos (Paso Crítico)</span>
           </div>
+          
           <form onSubmit={handleManualSave} className="p-6 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Emisor / Cliente</label>
-                <input type="text" required value={extractedData.emitter || ''} onChange={(e) => setExtractedData({...extractedData, emitter: e.target.value})} className="w-full px-4 py-2 border rounded-lg outline-none" />
+                <input 
+                  type="text" 
+                  required
+                  value={extractedData.emitter || ''} 
+                  onChange={(e) => setExtractedData({...extractedData, emitter: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Fecha Factura</label>
-                <input type="date" required value={extractedData.date || ''} onChange={(e) => setExtractedData({...extractedData, date: e.target.value})} className="w-full px-4 py-2 border rounded-lg outline-none" />
+                <input 
+                  type="date" 
+                  required
+                  value={extractedData.date || ''} 
+                  onChange={(e) => setExtractedData({...extractedData, date: e.target.value})}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
+                />
               </div>
             </div>
 
             <div>
               <div className="flex justify-between items-center mb-2">
                 <label className="block text-sm font-medium text-gray-700">Desglose de IVA</label>
-                <button type="button" onClick={addIvaDetail} className="text-sm text-orange-600 flex items-center"><Plus size={16} className="mr-1"/> Añadir tipo</button>
+                <button type="button" onClick={addIvaDetail} className="text-sm text-orange-600 hover:text-orange-800 flex items-center">
+                  <Plus size={16} className="mr-1"/> Añadir tipo de IVA
+                </button>
               </div>
+              
               <div className="space-y-3">
                 {extractedData.ivaDetails?.map((iva, index) => (
                   <div key={index} className="flex items-center space-x-3 bg-gray-50 p-3 rounded-lg border border-gray-200">
                     <div className="flex-1">
                       <label className="block text-xs text-gray-500 mb-1">Base Imponible (€)</label>
-                      <input type="number" step="0.01" required value={iva.base || ''} onChange={(e) => updateIvaDetail(index, 'base', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm outline-none" />
+                      <input 
+                        type="number" step="0.01" required
+                        value={iva.base || ''} 
+                        onChange={(e) => updateIvaDetail(index, 'base', e.target.value)}
+                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm outline-none"
+                      />
                     </div>
                     <div className="w-24">
                       <label className="block text-xs text-gray-500 mb-1">% IVA</label>
-                      <select value={iva.rate} onChange={(e) => updateIvaDetail(index, 'rate', e.target.value)} className="w-full px-3 py-1.5 border rounded-md text-sm outline-none bg-white">
-                        <option value="21">21%</option><option value="10">10%</option><option value="4">4%</option><option value="0">0%</option>
+                      <select 
+                        value={iva.rate} 
+                        onChange={(e) => updateIvaDetail(index, 'rate', e.target.value)}
+                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm outline-none bg-white"
+                      >
+                        <option value="21">21%</option>
+                        <option value="10">10%</option>
+                        <option value="4">4%</option>
+                        <option value="0">0%</option>
                       </select>
                     </div>
                     <div className="flex-1">
                       <label className="block text-xs text-gray-500 mb-1">Cuota IVA (€)</label>
-                      <input type="number" step="0.01" readOnly value={iva.amount ? iva.amount.toFixed(2) : '0.00'} className="w-full px-3 py-1.5 border rounded-md text-sm bg-gray-100 outline-none" />
+                      <input 
+                        type="number" step="0.01" readOnly
+                        value={iva.amount ? iva.amount.toFixed(2) : '0.00'} 
+                        className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-gray-100 outline-none text-gray-600"
+                      />
                     </div>
                     {extractedData.ivaDetails.length > 1 && (
-                      <button type="button" onClick={() => removeIvaDetail(index)} className="mt-5 text-red-500"><Trash2 size={18} /></button>
+                      <button type="button" onClick={() => removeIvaDetail(index)} className="mt-5 text-red-500 hover:text-red-700">
+                        <Trash2 size={18} />
+                      </button>
                     )}
                   </div>
                 ))}
@@ -508,14 +620,34 @@ function UploadView({ type, onSave }) {
             </div>
 
             <div className="bg-gray-800 text-white p-4 rounded-lg flex justify-between items-center">
-              <div><p className="text-sm text-gray-400">Base Imponible</p><p className="font-semibold">€{extractedData.subtotal?.toFixed(2) || '0.00'}</p></div>
-              <div><p className="text-sm text-gray-400">Total IVA</p><p className="font-semibold">€{extractedData.totalIva?.toFixed(2) || '0.00'}</p></div>
-              <div className="text-right"><p className="text-sm text-gray-400">Total</p><p className="text-xl font-bold text-orange-400">€{extractedData.total?.toFixed(2) || '0.00'}</p></div>
+              <div>
+                <p className="text-sm text-gray-400">Total Base Imponible</p>
+                <p className="font-semibold">€{extractedData.subtotal?.toFixed(2) || '0.00'}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-400">Total IVA</p>
+                <p className="font-semibold">€{extractedData.totalIva?.toFixed(2) || '0.00'}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-gray-400">Total Factura</p>
+                <p className="text-xl font-bold text-orange-400">€{extractedData.total?.toFixed(2) || '0.00'}</p>
+              </div>
             </div>
 
             <div className="flex justify-end space-x-3 pt-4 border-t border-gray-100">
-              <button type="button" onClick={() => setExtractedData(null)} className="px-6 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-lg">Cancelar</button>
-              <button type="submit" className="bg-black text-white px-6 py-2 rounded-lg font-medium shadow-md">Guardar en la Nube</button>
+              <button 
+                type="button" 
+                onClick={() => setExtractedData(null)}
+                className="px-6 py-2 text-gray-600 font-medium hover:bg-gray-100 rounded-lg"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="submit"
+                className="bg-black text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-900 shadow-md"
+              >
+                Confirmar y Guardar
+              </button>
             </div>
           </form>
         </div>
@@ -524,178 +656,151 @@ function UploadView({ type, onSave }) {
   );
 }
 
+// --- VISTA DE REPORTES Y CÁLCULOS ---
 function ReportsView({ invoices, onDelete }) {
-  const [filterPeriod, setFilterPeriod] = useState('all');
+  const [filterPeriod, setFilterPeriod] = useState('all'); // all, q1, q2, q3, q4, y2023, etc.
   
+  // Lógica de filtrado
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
       if (filterPeriod === 'all') return true;
       const date = new Date(inv.date);
-      const month = date.getMonth();
+      const month = date.getMonth(); // 0-11
       const year = date.getFullYear();
+      
       if (filterPeriod === 'q1') return month >= 0 && month <= 2;
       if (filterPeriod === 'q2') return month >= 3 && month <= 5;
       if (filterPeriod === 'q3') return month >= 6 && month <= 8;
       if (filterPeriod === 'q4') return month >= 9 && month <= 11;
       if (filterPeriod.startsWith('y')) return year.toString() === filterPeriod.substring(1);
+      
       return true;
     });
   }, [invoices, filterPeriod]);
 
+  // Cálculos del reporte
   const stats = useMemo(() => {
     const income = filteredInvoices.filter(i => i.type === 'income');
     const expense = filteredInvoices.filter(i => i.type === 'expense');
+
     const totalIncomeBase = income.reduce((sum, i) => sum + i.subtotal, 0);
     const totalIncomeIva = income.reduce((sum, i) => sum + i.totalIva, 0);
+    
     const totalExpenseBase = expense.reduce((sum, i) => sum + i.subtotal, 0);
     const totalExpenseIva = expense.reduce((sum, i) => sum + i.totalIva, 0);
-    return { totalIncomeBase, totalIncomeIva, totalExpenseBase, totalExpenseIva, liquidacion: totalIncomeIva - totalExpenseIva };
+
+    return {
+      totalIncomeBase, totalIncomeIva,
+      totalExpenseBase, totalExpenseIva,
+      liquidacion: totalIncomeIva - totalExpenseIva
+    };
   }, [filteredInvoices]);
 
-  // FUNCIÓN PARA EXPORTAR A PDF
-  const handleExportPDF = () => {
-    if (!window.jspdf || !window.jspdf.jsPDF) {
-      alert("El generador de PDF aún se está cargando. Por favor, espera un par de segundos e inténtalo de nuevo.");
-      return;
-    }
-    
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF();
-
-    // Título y Periodo
-    let periodText = filterPeriod === 'all' ? 'Todo el histórico' : filterPeriod.toUpperCase();
-    doc.setFontSize(18);
-    doc.text(`Reporte de IVA - REDES CARRERAS S.L.`, 14, 20);
-    doc.setFontSize(11);
-    doc.setTextColor(100);
-    doc.text(`Periodo seleccionado: ${periodText}`, 14, 28);
-    doc.text(`Fecha de emisión: ${new Date().toLocaleDateString()}`, 14, 34);
-
-    // Preparar datos para la tabla
-    const tableData = filteredInvoices.sort((a,b) => new Date(b.date) - new Date(a.date)).map(inv => [
-      inv.date,
-      inv.emitter,
-      inv.type === 'income' ? 'VENTA' : 'COMPRA',
-      `€ ${inv.subtotal.toFixed(2)}`,
-      `€ ${inv.totalIva.toFixed(2)}`,
-      `€ ${inv.total.toFixed(2)}`
-    ]);
-
-    // Generar Tabla
-    doc.autoTable({
-      startY: 42,
-      head: [['Fecha', 'Concepto', 'Tipo', 'Base Imp.', 'Total IVA', 'Total']],
-      body: tableData,
-      theme: 'grid',
-      headStyles: { fillColor: [234, 88, 12] }, // Naranja corporativo
-      styles: { fontSize: 9 }
-    });
-
-    // Resumen de Liquidación al final de la tabla
-    const finalY = doc.lastAutoTable.finalY || 42;
-    doc.setFontSize(14);
-    doc.setTextColor(0);
-    doc.text("Resumen de Liquidación", 14, finalY + 15);
-    
-    doc.setFontSize(11);
-    doc.setTextColor(80);
-    doc.text(`Total IVA Repercutido (Ventas): € ${stats.totalIncomeIva.toFixed(2)}`, 14, finalY + 25);
-    doc.text(`Total IVA Soportado (Compras): € ${stats.totalExpenseIva.toFixed(2)}`, 14, finalY + 32);
-    
-    doc.setFontSize(12);
-    const isPagar = stats.liquidacion >= 0;
-    doc.setTextColor(isPagar ? 220 : 22, isPagar ? 38 : 163, isPagar ? 38 : 74); // Rojo si a pagar, Verde si a devolver
-    doc.setFont(undefined, 'bold');
-    
-    const resultadoTexto = isPagar ? 'A PAGAR A HACIENDA' : 'A DEVOLVER / COMPENSAR';
-    doc.text(`RESULTADO FINAL: € ${Math.abs(stats.liquidacion).toFixed(2)} (${resultadoTexto})`, 14, finalY + 45);
-
-    // Guardar el archivo
-    doc.save(`Reporte_IVA_RedesCarreras_${periodText}.pdf`);
-  };
-
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="w-full space-y-6">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Reportes y Liquidación</h2>
-          <p className="text-gray-500">Consulta los totales para presentar a Hacienda.</p>
+          <p className="text-gray-500">Consulta los totales trimestrales y anuales para presentar a Hacienda.</p>
         </div>
-        <div className="flex items-center space-x-3 bg-white p-2 rounded-lg shadow-sm border">
+        
+        <div className="flex items-center space-x-3 bg-white p-2 rounded-lg shadow-sm border border-gray-200">
           <Filter size={18} className="text-gray-400 ml-2" />
-          <select value={filterPeriod} onChange={(e) => setFilterPeriod(e.target.value)} className="bg-transparent text-sm font-medium outline-none pr-4">
+          <select 
+            value={filterPeriod} 
+            onChange={(e) => setFilterPeriod(e.target.value)}
+            className="bg-transparent text-sm font-medium text-gray-700 outline-none pr-4 cursor-pointer"
+          >
             <option value="all">Todo el Histórico</option>
+            <option disabled>--- Trimestres ---</option>
             <option value="q1">Primer Trimestre (Q1)</option>
             <option value="q2">Segundo Trimestre (Q2)</option>
             <option value="q3">Tercer Trimestre (Q3)</option>
             <option value="q4">Cuarto Trimestre (Q4)</option>
+            <option disabled>--- Años ---</option>
             <option value="y2023">Año 2023</option>
             <option value="y2024">Año 2024</option>
           </select>
         </div>
       </header>
 
+      {/* Tarjetas de Liquidación */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-white p-6 rounded-xl shadow-sm border-t-4 border-green-500">
-          <h4 className="text-sm font-bold text-gray-500 uppercase">Ventas</h4>
-          <p className="text-3xl font-bold">€{stats.totalIncomeIva.toFixed(2)}</p>
+          <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">Ventas (Repercutido)</h4>
+          <p className="text-3xl font-bold text-gray-900">€{stats.totalIncomeIva.toFixed(2)}</p>
           <p className="text-sm text-gray-500 mt-1">Base: €{stats.totalIncomeBase.toFixed(2)}</p>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border-t-4 border-red-500">
-          <h4 className="text-sm font-bold text-gray-500 uppercase">Compras</h4>
-          <p className="text-3xl font-bold">€{stats.totalExpenseIva.toFixed(2)}</p>
+          <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">Compras (Soportado)</h4>
+          <p className="text-3xl font-bold text-gray-900">€{stats.totalExpenseIva.toFixed(2)}</p>
           <p className="text-sm text-gray-500 mt-1">Base: €{stats.totalExpenseBase.toFixed(2)}</p>
         </div>
         <div className={`p-6 rounded-xl shadow-sm border-t-4 text-white ${stats.liquidacion >= 0 ? 'bg-orange-600 border-orange-800' : 'bg-green-600 border-green-800'}`}>
-          <h4 className="text-sm font-bold uppercase mb-2">Resultado</h4>
+          <h4 className="text-sm font-bold uppercase tracking-wider mb-2 opacity-90">Resultado Liquidación</h4>
           <p className="text-3xl font-bold">€{Math.abs(stats.liquidacion).toFixed(2)}</p>
-          <p className="text-sm mt-1">{stats.liquidacion >= 0 ? 'A PAGAR A HACIENDA' : 'A DEVOLVER / COMPENSAR'}</p>
+          <p className="text-sm mt-1 opacity-90">
+            {stats.liquidacion >= 0 ? 'A PAGAR A HACIENDA' : 'A DEVOLVER / COMPENSAR'}
+          </p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
-          <h3 className="font-semibold">Detalle de Facturas</h3>
-          <button onClick={handleExportPDF} className="text-sm bg-orange-100 text-orange-700 px-3 py-1.5 rounded font-medium flex items-center hover:bg-orange-200 transition-colors">
-            <Download size={16} className="mr-2" /> Extraer a PDF
+      {/* Tabla Detallada */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+          <h3 className="font-semibold text-gray-800">Detalle de Facturas</h3>
+          <button className="text-sm text-orange-600 font-medium flex items-center hover:text-orange-800">
+            <Download size={16} className="mr-1" /> Exportar a CSV
           </button>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="text-xs text-gray-700 uppercase bg-white border-b">
+          <table className="w-full text-sm text-left text-gray-600">
+            <thead className="text-xs text-gray-700 uppercase bg-white border-b border-gray-200">
               <tr>
-                <th className="px-6 py-4">Fecha</th><th className="px-6 py-4">Concepto</th><th className="px-6 py-4">Tipo</th>
-                <th className="px-6 py-4 text-right">Base Imp.</th><th className="px-6 py-4 text-center">IVA</th>
-                <th className="px-6 py-4 text-right">Total</th><th className="px-6 py-4 text-center">Acción</th>
+                <th className="px-6 py-4">Fecha</th>
+                <th className="px-6 py-4">Concepto / Emisor</th>
+                <th className="px-6 py-4">Tipo</th>
+                <th className="px-6 py-4 text-right">Base Imp.</th>
+                <th className="px-6 py-4 text-center">Tipos IVA</th>
+                <th className="px-6 py-4 text-right">Total IVA</th>
+                <th className="px-6 py-4 text-right">Total</th>
+                <th className="px-6 py-4 text-center">Acción</th>
               </tr>
             </thead>
             <tbody>
               {filteredInvoices.sort((a,b) => new Date(b.date) - new Date(a.date)).map((inv) => (
-                <tr key={inv.id} className="bg-white border-b hover:bg-gray-50">
-                  <td className="px-6 py-4">{inv.date}</td>
+                <tr key={inv.id} className="bg-white border-b hover:bg-gray-50 transition-colors">
+                  <td className="px-6 py-4 whitespace-nowrap">{inv.date}</td>
                   <td className="px-6 py-4 font-medium text-gray-900">{inv.emitter}</td>
                   <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${inv.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold tracking-wider ${inv.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
                       {inv.type === 'income' ? 'VENTA' : 'COMPRA'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right">€{inv.subtotal.toFixed(2)}</td>
                   <td className="px-6 py-4 text-center">
                     <div className="flex flex-wrap gap-1 justify-center">
-                      {inv.ivaDetails.map((d, i) => <span key={i} className="bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded text-[10px]">{d.rate}%</span>)}
+                      {inv.ivaDetails.map((d, i) => (
+                        <span key={i} className="bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded text-[10px]">
+                          {d.rate}%
+                        </span>
+                      ))}
                     </div>
                   </td>
+                  <td className="px-6 py-4 text-right font-medium text-orange-600">€{inv.totalIva.toFixed(2)}</td>
                   <td className="px-6 py-4 text-right font-bold text-gray-900">€{inv.total.toFixed(2)}</td>
                   <td className="px-6 py-4 text-center">
-                    <button onClick={() => onDelete(inv.id)} className="text-gray-400 hover:text-red-600"><Trash2 size={18} /></button>
+                    <button onClick={() => onDelete(inv.id)} className="text-gray-400 hover:text-red-600 transition-colors">
+                      <Trash2 size={18} />
+                    </button>
                   </td>
                 </tr>
               ))}
               {filteredInvoices.length === 0 && (
                 <tr>
-                  <td colSpan="7" className="px-6 py-12 text-center text-gray-400">
+                  <td colSpan="8" className="px-6 py-12 text-center text-gray-400">
                     <Calendar size={48} className="mx-auto text-gray-300 mb-3" />
-                    <p>No hay facturas registradas.</p>
+                    <p>No hay facturas registradas en este periodo.</p>
                   </td>
                 </tr>
               )}
