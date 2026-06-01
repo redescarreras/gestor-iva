@@ -40,12 +40,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Datos de ejemplo iniciales
-const initialInvoices = [
-  { id: '1', type: 'income', emitter: 'Cliente A', date: '2023-10-15', subtotal: 1000, ivaDetails: [{ rate: 21, base: 1000, amount: 210 }], totalIva: 210, total: 1210 },
-  { id: '2', type: 'expense', emitter: 'Proveedor Internet', date: '2023-10-20', subtotal: 200, ivaDetails: [{ rate: 21, base: 200, amount: 42 }], totalIva: 42, total: 242 },
-];
-
 export default function App() {
   const [invoices, setInvoices] = useState([]);
   const [currentView, setCurrentView] = useState('dashboard');
@@ -53,20 +47,6 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-
-  // --- ELIMINAR LÍMITES POR DEFECTO DE VITE ---
-  useEffect(() => {
-    // Forzamos al body y al contenedor raíz a ocupar el 100% sin márgenes blancos
-    document.body.style.margin = '0';
-    document.body.style.padding = '0';
-    const rootNode = document.getElementById('root');
-    if (rootNode) {
-      rootNode.style.maxWidth = '100%';
-      rootNode.style.margin = '0';
-      rootNode.style.padding = '0';
-      rootNode.style.textAlign = 'left';
-    }
-  }, []);
 
   // Función para alternar pantalla completa del navegador
   const toggleFullScreen = () => {
@@ -151,6 +131,12 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-full bg-gray-50 text-gray-800 font-sans overflow-hidden">
+      {/* ⚠️ ESTO DESTRUYE LOS LÍMITES POR DEFECTO DE REACT/VITE FORZANDO EL ANCHO COMPLETO */}
+      <style>{`
+        #root { max-width: none !important; width: 100% !important; padding: 0 !important; margin: 0 !important; }
+        body { display: block !important; margin: 0 !important; padding: 0 !important; width: 100vw !important; overflow-x: hidden !important; }
+      `}</style>
+
       {/* Sidebar Navigation */}
       <aside className="w-64 bg-black text-white flex flex-col shadow-xl z-20 flex-shrink-0">
         <div className="p-6 flex flex-col items-center border-b border-gray-800">
@@ -203,7 +189,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto relative w-full">
-        {/* Aquí cambiamos max-w-7xl mx-auto por w-full para que ocupe todo el ancho */}
+        {/* Usamos el 100% del ancho del main */}
         <div className="p-8 w-full">
           {currentView === 'dashboard' && <DashboardView invoices={invoices} />}
           {currentView === 'upload-expense' && <UploadView type="expense" onSave={addInvoice} />}
@@ -242,7 +228,7 @@ function DashboardView({ invoices }) {
         <p className="text-gray-500">Vista rápida del estado del IVA de la empresa.</p>
       </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full">
         <StatCard 
           title="IVA Repercutido (Ventas)" 
           amount={totalIncomeIVA} 
@@ -264,9 +250,9 @@ function DashboardView({ invoices }) {
         />
       </div>
 
-      <div className="mt-12 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+      <div className="mt-12 bg-white p-6 rounded-xl shadow-sm border border-gray-100 w-full">
         <h3 className="text-xl font-semibold mb-4">Últimos Movimientos Registrados</h3>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto w-full">
           <table className="w-full text-sm text-left text-gray-500">
             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
               <tr>
@@ -307,7 +293,7 @@ function DashboardView({ invoices }) {
 function StatCard({ title, amount, icon, bgColor, isResult }) {
   const isNegative = amount < 0;
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4">
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center space-x-4 w-full">
       <div className={`p-4 rounded-full ${bgColor}`}>
         {icon}
       </div>
@@ -786,18 +772,18 @@ function ReportsView({ invoices, onDelete }) {
       </header>
 
       {/* Tarjetas de Liquidación */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-xl shadow-sm border-t-4 border-green-500">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 w-full">
+        <div className="bg-white p-6 rounded-xl shadow-sm border-t-4 border-green-500 w-full">
           <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">Ventas (Repercutido)</h4>
           <p className="text-3xl font-bold text-gray-900">€{stats.totalIncomeIva.toFixed(2)}</p>
           <p className="text-sm text-gray-500 mt-1">Base: €{stats.totalIncomeBase.toFixed(2)}</p>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border-t-4 border-red-500">
+        <div className="bg-white p-6 rounded-xl shadow-sm border-t-4 border-red-500 w-full">
           <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-2">Compras (Soportado)</h4>
           <p className="text-3xl font-bold text-gray-900">€{stats.totalExpenseIva.toFixed(2)}</p>
           <p className="text-sm text-gray-500 mt-1">Base: €{stats.totalExpenseBase.toFixed(2)}</p>
         </div>
-        <div className={`p-6 rounded-xl shadow-sm border-t-4 text-white ${stats.liquidacion >= 0 ? 'bg-orange-600 border-orange-800' : 'bg-green-600 border-green-800'}`}>
+        <div className={`p-6 rounded-xl shadow-sm border-t-4 text-white w-full ${stats.liquidacion >= 0 ? 'bg-orange-600 border-orange-800' : 'bg-green-600 border-green-800'}`}>
           <h4 className="text-sm font-bold uppercase tracking-wider mb-2 opacity-90">Resultado Liquidación</h4>
           <p className="text-3xl font-bold">€{Math.abs(stats.liquidacion).toFixed(2)}</p>
           <p className="text-sm mt-1 opacity-90">
@@ -807,14 +793,14 @@ function ReportsView({ invoices, onDelete }) {
       </div>
 
       {/* Tabla Detallada */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden w-full">
         <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
           <h3 className="font-semibold text-gray-800">Detalle de Facturas</h3>
           <button onClick={handleExportPDF} className="text-sm bg-orange-100 text-orange-700 px-3 py-1.5 rounded font-medium flex items-center hover:bg-orange-200 transition-colors">
             <Download size={16} className="mr-2" /> Extraer a PDF
           </button>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto w-full">
           <table className="w-full text-sm text-left text-gray-600">
             <thead className="text-xs text-gray-700 uppercase bg-white border-b border-gray-200">
               <tr>
