@@ -17,7 +17,10 @@ import {
   CloudOff,
   Maximize,
   Minimize,
-  Lock
+  Lock,
+  Search,
+  Edit,
+  Database
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
@@ -167,6 +170,16 @@ export default function App() {
     }
   };
 
+  const updateInvoice = async (updatedInvoice) => {
+    if (!user) return;
+    try {
+      const docRef = doc(db, 'users', user.uid, 'invoices', updatedInvoice.id);
+      await setDoc(docRef, updatedInvoice);
+    } catch (error) {
+      console.error("Error actualizando la factura:", error);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="flex h-screen w-full items-center justify-center bg-gray-50 flex-col space-y-4">
@@ -279,6 +292,7 @@ export default function App() {
           <NavItem icon={<TrendingDown className="text-red-400" />} label="Subir Compras (Gastos)" isActive={currentView === 'upload-expense'} onClick={() => setCurrentView('upload-expense')} />
           <NavItem icon={<TrendingUp className="text-green-400" />} label="Subir Ventas (Emitidas)" isActive={currentView === 'upload-income'} onClick={() => setCurrentView('upload-income')} />
           <NavItem icon={<FileText />} label="Reportes y Liquidación" isActive={currentView === 'reports'} onClick={() => setCurrentView('reports')} />
+          <NavItem icon={<Database />} label="Ajustes y Backups" isActive={currentView === 'settings'} onClick={() => setCurrentView('settings')} />
         </nav>
         
         <div className="p-4 text-xs text-gray-500 border-t border-gray-800 text-center flex flex-col items-center">
@@ -320,7 +334,8 @@ export default function App() {
           {currentView === 'dashboard' && <DashboardView invoices={invoices} />}
           {currentView === 'upload-expense' && <UploadView type="expense" onSave={addInvoice} />}
           {currentView === 'upload-income' && <UploadView type="income" onSave={addInvoice} />}
-          {currentView === 'reports' && <ReportsView invoices={invoices} onDelete={deleteInvoice} />}
+          {currentView === 'reports' && <ReportsView invoices={invoices} onDelete={deleteInvoice} onUpdate={updateInvoice} />}
+          {currentView === 'settings' && <SettingsView invoices={invoices} user={user} db={db} />}
         </div>
       </main>
     </div>
@@ -593,7 +608,7 @@ function UploadView({ type, onSave }) {
     <div className="w-full">
       <header className="mb-8">
         <h2 className="text-3xl font-bold text-gray-900">
-          {type === 'expense' ? 'Subir Factura de Combra/Gasto' : 'Subir Factura de Venta/Emitida'}
+          {type === 'expense' ? 'Subir Factura de Compra/Gasto' : 'Subir Factura de Venta/Emitida'}
         </h2>
         <p className="text-gray-500">Sube una imagen o PDF. Nuestra IA extraerá automáticamente el IVA.</p>
       </header>
@@ -698,23 +713,33 @@ function UploadView({ type, onSave }) {
 }
 
 // --- VISTA DE REPORTES Y CÁLCULOS ---
-function ReportsView({ invoices, onDelete }) {
+function ReportsView({ invoices, onDelete, onUpdate }) {
   const [filterPeriod, setFilterPeriod] = useState('all'); 
+  const [searchTerm, setSearchTerm] = useState('');
+  const [editData, setEditData] = useState(null);
   
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
-      if (filterPeriod === 'all') return true;
-      const date = new Date(inv.date);
-      const month = date.getMonth(); 
-      const year = date.getFullYear();
-      if (filterPeriod === 'q1') return month >= 0 && month <= 2;
-      if (filterPeriod === 'q2') return month >= 3 && month <= 5;
-      if (filterPeriod === 'q3') return month >= 6 && month <= 8;
-      if (filterPeriod === 'q4') return month >= 9 && month <= 11;
-      if (filterPeriod.startsWith('y')) return year.toString() === filterPeriod.substring(1);
+      // Filtrar por Periodo
+      if (filterPeriod !== 'all') {
+        const date = new Date(inv.date);
+        const month = date.getMonth(); 
+        const year = date.getFullYear();
+        if (filterPeriod === 'q1' && !(month >= 0 && month <= 2)) return false;
+        if (filterPeriod === 'q2' && !(month >= 3 && month <= 5)) return false;
+        if (filterPeriod === 'q3' && !(month >= 6 && month <= 8)) return false;
+        if (filterPeriod === 'q4' && !(month >= 9 && month <= 11)) return false;
+        if (filterPeriod.startsWith('y') && year.toString() !== filterPeriod.substring(1)) return false;
+      }
+      
+      // Filtrar por Buscador (Empresa/Emisor)
+      if (searchTerm && (!inv.emitter || !inv.emitter.toLowerCase().includes(searchTerm.toLowerCase()))) {
+        return false;
+      }
+      
       return true;
     });
-  }, [invoices, filterPeriod]);
+  }, [invoices, filterPeriod, searchTerm]);
 
   const stats = useMemo(() => {
     const income = filteredInvoices.filter(i => i.type === 'income');
@@ -771,26 +796,147 @@ function ReportsView({ invoices, onDelete }) {
     doc.save(`Reporte_IVA_RedesCarreras_${periodText}.pdf`);
   };
 
+  const handleSaveEdit = (e) => {
+    e.preventDefault();
+    if(!editData) return;
+    
+    // Auto-calcular totales de nuevo para asegurar precisión
+    const finalData = {
+      ...editData,
+      totalIva: editData.ivaDetails.reduce((acc, curr) => acc + Number(curr.amount), 0),
+      total: Number(editData.subtotal) + editData.ivaDetails.reduce((acc, curr) => acc + Number(curr.amount), 0)
+    };
+    
+    onUpdate(finalData);
+    setEditData(null);
+  };
+
+  const updateEditIvaDetail = (index, field, value) => {
+    const newDetails = [...editData.ivaDetails];
+    newDetails[index][field] = Number(value);
+    if (field === 'base' || field === 'rate') {
+       newDetails[index].amount = (newDetails[index].base * (newDetails[index].rate / 100));
+    }
+    const newSubtotal = newDetails.reduce((acc, curr) => acc + curr.base, 0);
+    const newTotalIva = newDetails.reduce((acc, curr) => acc + curr.amount, 0);
+    setEditData({
+      ...editData,
+      ivaDetails: newDetails,
+      subtotal: newSubtotal,
+      totalIva: newTotalIva,
+      total: newSubtotal + newTotalIva
+    });
+  };
+
   return (
     <div className="w-full space-y-6">
+      
+      {/* MODAL EMERGENTE DE EDICIÓN DE FACTURA */}
+      {editData && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-gray-900 flex items-center"><Edit size={20} className="mr-2"/> Editar Factura</h3>
+              <button onClick={() => setEditData(null)} className="text-gray-500 hover:text-gray-800 font-bold">✕</button>
+            </div>
+            
+            <form onSubmit={handleSaveEdit} className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Factura</label>
+                  <select 
+                    value={editData.type} 
+                    onChange={(e) => setEditData({...editData, type: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="expense">Compra (Soportado)</option>
+                    <option value="income">Venta (Repercutido)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Emisor / Cliente</label>
+                  <input 
+                    type="text" required value={editData.emitter} 
+                    onChange={(e) => setEditData({...editData, emitter: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Fecha</label>
+                  <input 
+                    type="date" required value={editData.date} 
+                    onChange={(e) => setEditData({...editData, date: e.target.value})}
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Desglose de IVA</label>
+                <div className="space-y-3">
+                  {editData.ivaDetails.map((iva, index) => (
+                    <div key={index} className="flex items-center space-x-3 bg-gray-50 p-3 rounded-lg border border-gray-200">
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-500 mb-1">Base Imponible (€)</label>
+                        <input type="number" step="0.01" required value={iva.base} onChange={(e) => updateEditIvaDetail(index, 'base', e.target.value)} className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm outline-none" />
+                      </div>
+                      <div className="w-24">
+                        <label className="block text-xs text-gray-500 mb-1">% IVA</label>
+                        <select value={iva.rate} onChange={(e) => updateEditIvaDetail(index, 'rate', e.target.value)} className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm outline-none bg-white">
+                          <option value="21">21%</option><option value="10">10%</option><option value="4">4%</option><option value="0">0%</option>
+                        </select>
+                      </div>
+                      <div className="flex-1">
+                        <label className="block text-xs text-gray-500 mb-1">Cuota IVA (€)</label>
+                        <input type="number" step="0.01" readOnly value={iva.amount ? iva.amount.toFixed(2) : '0.00'} className="w-full px-3 py-1.5 border border-gray-300 rounded-md text-sm bg-gray-100 outline-none text-gray-600" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4 border-t border-gray-100">
+                <button type="button" onClick={() => setEditData(null)} className="px-6 py-2 text-gray-600 hover:bg-gray-100 font-medium rounded-lg">Cancelar</button>
+                <button type="submit" className="bg-orange-600 text-white px-6 py-2 rounded-lg font-medium hover:bg-orange-700 shadow-md">Guardar Cambios</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
           <h2 className="text-3xl font-bold text-gray-900">Reportes y Liquidación</h2>
           <p className="text-gray-500">Consulta los totales trimestrales y anuales para presentar a Hacienda.</p>
         </div>
-        <div className="flex items-center space-x-3 bg-white p-2 rounded-lg shadow-sm border border-gray-200">
-          <Filter size={18} className="text-gray-400 ml-2" />
-          <select value={filterPeriod} onChange={(e) => setFilterPeriod(e.target.value)} className="bg-transparent text-sm font-medium text-gray-700 outline-none pr-4 cursor-pointer">
-            <option value="all">Todo el Histórico</option>
-            <option disabled>--- Trimestres ---</option>
-            <option value="q1">Primer Trimestre (Q1)</option>
-            <option value="q2">Segundo Trimestre (Q2)</option>
-            <option value="q3">Tercer Trimestre (Q3)</option>
-            <option value="q4">Cuarto Trimestre (Q4)</option>
-            <option disabled>--- Años ---</option>
-            <option value="y2023">Año 2023</option>
-            <option value="y2024">Año 2024</option>
-          </select>
+        
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          {/* BUSCADOR */}
+          <div className="flex items-center bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm w-full sm:w-64 focus-within:ring-2 focus-within:ring-orange-500">
+            <Search size={18} className="text-gray-400 mr-2" />
+            <input 
+              type="text" 
+              placeholder="Buscar emisor o empresa..." 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="outline-none text-sm w-full bg-transparent"
+            />
+          </div>
+
+          <div className="flex items-center bg-white p-2 rounded-lg shadow-sm border border-gray-200">
+            <Filter size={18} className="text-gray-400 ml-2" />
+            <select value={filterPeriod} onChange={(e) => setFilterPeriod(e.target.value)} className="bg-transparent text-sm font-medium text-gray-700 outline-none pr-4 cursor-pointer">
+              <option value="all">Todo el Histórico</option>
+              <option disabled>--- Trimestres ---</option>
+              <option value="q1">Primer Trimestre (Q1)</option>
+              <option value="q2">Segundo Trimestre (Q2)</option>
+              <option value="q3">Tercer Trimestre (Q3)</option>
+              <option value="q4">Cuarto Trimestre (Q4)</option>
+              <option disabled>--- Años ---</option>
+              <option value="y2023">Año 2023</option>
+              <option value="y2024">Año 2024</option>
+            </select>
+          </div>
         </div>
       </header>
 
@@ -856,9 +1002,14 @@ function ReportsView({ invoices, onDelete }) {
                   <td className="px-6 py-4 text-right font-medium text-orange-600">€{inv.totalIva.toFixed(2)}</td>
                   <td className="px-6 py-4 text-right font-bold text-gray-900">€{inv.total.toFixed(2)}</td>
                   <td className="px-6 py-4 text-center">
-                    <button onClick={() => onDelete(inv.id)} className="text-gray-400 hover:text-red-600 transition-colors">
-                      <Trash2 size={18} />
-                    </button>
+                    <div className="flex items-center justify-center space-x-3">
+                      <button onClick={() => setEditData({...inv})} className="text-gray-400 hover:text-blue-600 transition-colors" title="Editar Factura">
+                        <Edit size={18} />
+                      </button>
+                      <button onClick={() => onDelete(inv.id)} className="text-gray-400 hover:text-red-600 transition-colors" title="Eliminar">
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -866,12 +1017,116 @@ function ReportsView({ invoices, onDelete }) {
                 <tr>
                   <td colSpan="8" className="px-6 py-12 text-center text-gray-400">
                     <Calendar size={48} className="mx-auto text-gray-300 mb-3" />
-                    <p>No hay facturas registradas en este periodo.</p>
+                    <p>No hay facturas registradas para esta búsqueda o periodo.</p>
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- VISTA DE AJUSTES Y BACKUPS ---
+function SettingsView({ invoices, user, db }) {
+  const fileInputRef = useRef(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Lógica para exportar a archivo local
+  const handleExport = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(invoices, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `Backup_IVA_RedesCarreras_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  // Lógica para importar desde archivo local
+  const handleImport = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!window.confirm("Vas a importar facturas desde un archivo. Las facturas nuevas se añadirán a tu base de datos. ¿Estás seguro?")) {
+      e.target.value = "";
+      return;
+    }
+
+    setIsImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const importedInvoices = JSON.parse(event.target.result);
+        if (!Array.isArray(importedInvoices)) throw new Error("Formato inválido");
+        
+        for (const inv of importedInvoices) {
+          // Si no tiene id, le creamos uno nuevo, si lo tiene, lo sobrescribe/actualiza
+          const docRef = doc(db, 'users', user.uid, 'invoices', inv.id || Date.now().toString());
+          await setDoc(docRef, inv);
+        }
+        alert(`¡Se han importado y restaurado ${importedInvoices.length} facturas con éxito!`);
+      } catch (err) {
+        console.error(err);
+        alert("Error al importar: Asegúrate de que el archivo es un backup JSON válido exportado de esta aplicación.");
+      } finally {
+        setIsImporting(false);
+        if(fileInputRef.current) fileInputRef.current.value = "";
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="w-full max-w-4xl space-y-6">
+      <header className="mb-8">
+        <h2 className="text-3xl font-bold text-gray-900">Ajustes y Copias de Seguridad</h2>
+        <p className="text-gray-500">Exporta e importa tus facturas para tener respaldos seguros fuera de la nube.</p>
+      </header>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Panel de Exportación */}
+        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 flex flex-col items-center text-center">
+          <div className="bg-green-100 p-4 rounded-full mb-4">
+            <Download size={32} className="text-green-600" />
+          </div>
+          <h3 className="text-xl font-bold text-gray-800 mb-2">Exportar Datos (Backup)</h3>
+          <p className="text-gray-500 text-sm mb-6 flex-1">
+            Descarga un archivo JSON con todas las facturas registradas en la nube. Guárdalo en un disco duro o pendrive seguro.
+          </p>
+          <button 
+            onClick={handleExport}
+            className="w-full py-3 bg-black hover:bg-gray-800 text-white rounded-lg font-medium transition-colors shadow-md flex justify-center items-center"
+          >
+            <Database size={18} className="mr-2"/> Descargar Copia
+          </button>
+        </div>
+
+        {/* Panel de Importación */}
+        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 flex flex-col items-center text-center">
+          <div className="bg-orange-100 p-4 rounded-full mb-4">
+            <UploadCloud size={32} className="text-orange-600" />
+          </div>
+          <h3 className="text-xl font-bold text-gray-800 mb-2">Importar Datos (Restaurar)</h3>
+          <p className="text-gray-500 text-sm mb-6 flex-1">
+            Restaura facturas desde un archivo JSON. Si borraste algo por error o cambias de cuenta, súbelo aquí.
+          </p>
+          <input 
+            type="file" 
+            accept=".json" 
+            ref={fileInputRef}
+            onChange={handleImport}
+            className="hidden" 
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isImporting}
+            className="w-full py-3 border-2 border-orange-600 text-orange-600 hover:bg-orange-50 rounded-lg font-bold transition-colors flex justify-center items-center"
+          >
+            {isImporting ? <Loader2 className="animate-spin" size={20} /> : "Subir Archivo de Respaldo"}
+          </button>
         </div>
       </div>
     </div>
